@@ -462,6 +462,9 @@ int loadISOSwap(fileBrowser_file* file) {
 
 
 // loadISO loads an ISO, resets the system and loads the save.
+// 게임별 패드 종류 복원(PlugPAD.c): CheckCdrom()이 CdromId를 채운 직후 호출
+extern "C" void padtype_load_for_game(void);
+
 int loadISO(fileBrowser_file* file) 
 {
 	// Refresh file pointers
@@ -488,6 +491,7 @@ int loadISO(fileBrowser_file* file)
 	}
 	else {
 		CheckCdrom();
+		padtype_load_for_game(); // 저장된 게임별 패드 종류가 있으면 적용
 		SysReset();
 		LoadCdrom();
 	}
