@@ -217,6 +217,8 @@ static inline u8 analog_scale(u8 val)
 long PAD1__readPort1(PadDataS *pad) {
 	int pad_index = pad->requestPadIndex;
 	//SysPrintf("Read port 1 called with %i pad index, in use %s\r\n", pad_index, virtualControllers[pad_index].inUse ? "YES":"NO");
+	// 미배정 상태에서도 확장 컨트롤러 연결을 감지해야 하므로 inUse 검사보다 먼저 호출
+	control_hotplug_poll();
 	if(!virtualControllers[pad_index].inUse) return 0;
 
 	static BUTTONS PAD_Data;
