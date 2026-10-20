@@ -40,6 +40,9 @@
 #include <psemu_plugin_defs.h>
 #include "gc_input/controller.h"
 #include "wiiSXconfig.h"
+#ifdef HW_RVL
+#include <wiiuse/wpad.h>
+#endif
 
 
 
@@ -64,10 +67,80 @@ controller_t* controller_ts[num_controller_t] =
 	virtualControllers[Control].control->func( \
 		virtualControllers[Control].number, ## args)
 
+#if defined(WII) && !defined(NO_BT)
+/*
+ * [Wii 확장 컨트롤러(클래식 등) 즉시 인식 패치]
+ *
+ * 동작 원리:
+ *  - 위모컨이 블루투스로 연결된 직후에는 libogc가 "어떤 확장 컨트롤러가 꽂혀 있는지"를
+ *    비동기로 조회한다(수백 ms 소요). 이 조회가 끝나기 전에 WPAD_Probe()를 부르면
+ *    클래식 컨트롤러가 아직 'EXP_NONE'(=위모컨 단독)으로 보인다.
+ *  - 기존 코드는 시작 시 control_info_init()에서 딱 한 번만 장치를 배정했고,
+ *    게임 실행 중에는 다시 확인하지 않아서(메뉴 화면에서만 Gui::draw가 재배정)
+ *    홈/리셋 버튼으로 메뉴에 들어가야 클래식이 잡혔다.
+ *  - 해결: (1) 시작 시 확장 컨트롤러 감지가 안정될 때까지 잠깐 대기,
+ *          (2) 게임 중에도 주기적으로 4개 채널의 상태를 비교해 바뀌면 자동 재배정.
+ */
+
+// 4개 채널의 (연결상태, 확장 컨트롤러 종류)를 4비트씩 묶은 값. 값이 바뀌면 장치 구성이 바뀐 것.
+static u32 wpad_signature(void){
+	u32 sig = 0;
+	int i;
+	for(i=0; i<4; ++i){
+		u32 expType = 0;
+		int err = WPAD_Probe(i, &expType);
+		// 0: 미연결/준비 안 됨, 1+종류: 연결됨(1=단독, 2=눈챠쿠, 3=클래식 ...)
+		sig = (sig << 4) | (err == WPAD_ERR_NONE ? (1 + (expType & 7)) : 0);
+	}
+	return sig;
+}
+
+static u32 wpad_last_sig = 0;
+
+// 시작 시: 확장 컨트롤러 감지 결과가 일정 시간 변하지 않을 때까지 최대 약 1.6초 대기.
+static void wait_wpad_settle(void){
+	u32 last = (u32)-1;
+	int stable = 0, i;
+	for(i=0; i<100; ++i){
+		u32 sig;
+		WPAD_ScanPads();
+		sig = wpad_signature();
+		if(sig == last) ++stable; else { stable = 0; last = sig; }
+		// 연결된 위모컨이 전혀 없으면 기다릴 이유가 없으니 바로 종료
+		if(sig == 0 && stable >= 3) break;
+		// 약 240ms(15프레임) 동안 변화 없으면 감지 완료로 간주
+		if(stable >= 15) break;
+		usleep(16000);
+	}
+	wpad_last_sig = wpad_signature();
+}
+
+// 게임 실행 중 호출(프레임마다 불러도 됨): 약 0.5초마다 구성이 바뀌었는지 확인해 재배정.
+void control_hotplug_poll(void){
+	static int frames = 0;
+	u32 sig;
+	if(!padAutoAssign) return;          // 수동 배정 모드에서는 사용자 설정 유지
+	if(++frames < 30) return;
+	frames = 0;
+	sig = wpad_signature();
+	if(sig == wpad_last_sig) return;
+	wpad_last_sig = sig;
+	auto_assign_controllers();          // 클래식 우선순위로 다시 배정
+}
+#else
+void control_hotplug_poll(void){ }
+#endif
+
 void control_info_init(void){
 	//Call once during emulator start to auto assign controllers
+#if defined(WII) && !defined(NO_BT)
+	wait_wpad_settle();   // 클래식 컨트롤러 감지가 끝난 뒤에 배정해야 바로 인식됨
+#endif
 	init_controller_ts();
 	auto_assign_controllers();
+#if defined(WII) && !defined(NO_BT)
+	wpad_last_sig = wpad_signature();
+#endif
 }
 
 void pauseInput(void){
