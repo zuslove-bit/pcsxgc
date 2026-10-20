@@ -38,6 +38,7 @@ extern "C" {
 #include "../fileBrowser/fileBrowser-libfat.h"
 #include "../fileBrowser/fileBrowser-CARD.h"
 extern int in_type[8];
+void padtype_save_for_game(void); // 게임별 패드 종류 저장(PlugPAD.c)
 }
 
 extern void Func_SetPlayGame();
@@ -1251,6 +1252,7 @@ void Func_PadType(int btnId, int padNum, int type, int lblId)
 {
 	SelectBtnInGroup(btnId, lblId);
 	in_type[padNum] = type;
+	padtype_save_for_game(); // 현재 게임 ID로 선택한 패드 종류를 sd:/wiisx/padtype.cfg에 기억
 }
 
 void Func_Pad1TypeStandard()
