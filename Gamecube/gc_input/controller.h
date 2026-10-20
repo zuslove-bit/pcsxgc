@@ -37,6 +37,7 @@ extern u32 gc_connected;
 
 void control_info_init(void);
 void auto_assign_controllers(void);
+void control_hotplug_poll(void); // 게임 중 컨트롤러 구성 변경(클래식 연결 등) 감지 후 재배정
 
 typedef union {
 	u16 All;
