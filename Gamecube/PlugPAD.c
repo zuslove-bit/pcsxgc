@@ -43,6 +43,8 @@
 #ifdef HW_RVL
 #include <wiiuse/wpad.h>
 #endif
+#include <libpcsxcore/misc.h>
+extern int in_type[8];
 
 
 
@@ -226,6 +228,95 @@ void auto_assign_controllers(void)
 		unassign_controller(i);
 		padType[i] = PADTYPE_NONE;
 	}
+}
+
+/*
+ * [게임별 패드 종류 기억]
+ *
+ * 동작 원리:
+ *  - 패드 종류(표준/아날로그/마우스/건콘)는 전역 설정(in_type)이라 게임마다
+ *    설정 메뉴에서 매번 바꿔야 했다(포인트 블랭크 같은 건 게임은 건콘, 일반 게임은 표준).
+ *  - 설정 메뉴에서 패드 종류를 바꿀 때 현재 게임의 ID(CdromId, 예: SLUS-00000)와 함께
+ *    sd:/wiisx/padtype.cfg (SD가 없으면 usb:/wiisx/padtype.cfg)에 "ID=1P,2P,3P,4P" 한 줄로 저장하고,
+ *    ISO를 불러올 때(CheckCdrom 직후) 같은 ID가 있으면 자동으로 되돌려 적용한다.
+ *  - 저장된 항목이 없는 게임은 기존 동작(현재 설정 유지) 그대로다.
+ */
+#define PADTYPE_MAX_LINES 128
+#define PADTYPE_LINE_LEN  48
+
+// 읽을 파일 경로 결정: SD에 있으면 SD, 아니면 USB에 있으면 USB, 둘 다 없으면 새로 만들 SD 경로
+static const char* padtype_path(void){
+	FILE* f = fopen("sd:/wiisx/padtype.cfg", "r");
+	if(f){ fclose(f); return "sd:/wiisx/padtype.cfg"; }
+	f = fopen("usb:/wiisx/padtype.cfg", "r");
+	if(f){ fclose(f); return "usb:/wiisx/padtype.cfg"; }
+	return "sd:/wiisx/padtype.cfg";
+}
+
+// CdromId를 "ID" 문자열로 복사(최대 9자). 비어 있으면 0 반환.
+static int padtype_get_id(char* id){
+	if(CdromId[0] == '\0') return 0;
+	strncpy(id, CdromId, 9);
+	id[9] = '\0';
+	return 1;
+}
+
+// 설정 메뉴에서 패드 종류가 바뀔 때 호출: 현재 게임 항목만 갱신하고 나머지 항목은 보존.
+void padtype_save_for_game(void){
+	static char lines[PADTYPE_MAX_LINES][PADTYPE_LINE_LEN];
+	char id[10];
+	int n = 0, idlen;
+	const char* path;
+	FILE* f;
+
+	if(!padtype_get_id(id)) return;     // ISO가 아직 로드되지 않았으면 저장 안 함
+	idlen = strlen(id);
+	path = padtype_path();
+
+	f = fopen(path, "r");
+	if(f){
+		while(n < PADTYPE_MAX_LINES-1 && fgets(lines[n], PADTYPE_LINE_LEN, f)){
+			char* nl = strpbrk(lines[n], "\r\n");
+			if(nl) *nl = '\0';
+			if(lines[n][0] == '\0') continue;
+			// 같은 게임의 이전 항목은 버리고 아래에서 새로 씀
+			if(!strncmp(lines[n], id, idlen) && lines[n][idlen] == '=') continue;
+			++n;
+		}
+		fclose(f);
+	}
+	snprintf(lines[n++], PADTYPE_LINE_LEN, "%s=%d,%d,%d,%d",
+	         id, in_type[0], in_type[1], in_type[2], in_type[3]);
+
+	f = fopen(path, "w");
+	if(!f) return;                      // 쓰기 실패(SD 없음 등)는 조용히 무시
+	{
+		int i;
+		for(i=0; i<n; ++i) fprintf(f, "%s\n", lines[i]);
+	}
+	fclose(f);
+}
+
+// ISO 로드 직후 호출: 저장된 항목이 있으면 in_type에 적용.
+void padtype_load_for_game(void){
+	char id[10], line[PADTYPE_LINE_LEN];
+	int idlen, t[4], i;
+	FILE* f;
+
+	if(!padtype_get_id(id)) return;
+	idlen = strlen(id);
+	f = fopen(padtype_path(), "r");
+	if(!f) return;
+	while(fgets(line, sizeof(line), f)){
+		if(strncmp(line, id, idlen) || line[idlen] != '=') continue;
+		if(sscanf(line + idlen + 1, "%d,%d,%d,%d", &t[0], &t[1], &t[2], &t[3]) == 4){
+			for(i=0; i<4; ++i)
+				if(t[i] >= PSE_PAD_TYPE_NONE && t[i] <= PSE_PAD_TYPE_ANALOGPAD)
+					in_type[i] = t[i];  // 범위를 벗어난 값은 무시
+		}
+		break;
+	}
+	fclose(f);
 }
 
 int load_configurations(FILE* f, controller_t* controller){
